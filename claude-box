@@ -973,18 +973,47 @@ INIT
 HOST_ADDRS=""
 
 if [ "$FIREWALL" = 1 ]; then
-    if command -v ip >/dev/null 2>&1; then
-        HOST_ADDRS=$(
-            ip -o addr show scope global |
-                awk '{
-                    sub(/\/.*/, "", $4)
-                    print $4
-                }' |
-                tr '\n' ' '
-        )
-    else
-        HOST_ADDRS=$(hostname -I 2>/dev/null || true)
-    fi
+    case "$(uname -s)" in
+        Darwin)
+            # iproute2mac's `ip` command is not compatible with the Linux
+            # `ip -o addr show scope global` syntax. Use macOS ifconfig.
+            command -v ifconfig >/dev/null 2>&1 ||
+                die "ifconfig not found; cannot determine host addresses"
+
+            HOST_ADDRS=$(
+                ifconfig 2>/dev/null |
+                    awk '
+                        $1 == "inet" && $2 !~ /^127\./ {
+                            print $2
+                        }
+                        $1 == "inet6" {
+                            address = tolower($2)
+                            sub(/%.*/, "", address)
+
+                            if (address != "::1" &&
+                                address !~ /^fe80:/) {
+                                print address
+                            }
+                        }
+                    ' |
+                    tr '\n' ' '
+            )
+            ;;
+        *)
+            if command -v ip >/dev/null 2>&1; then
+                HOST_ADDRS=$(
+                    ip -o addr show scope global 2>/dev/null |
+                        awk '{
+                            sub(/\/.*/, "", $4)
+                            print $4
+                        }' |
+                        tr '\n' ' '
+                ) || HOST_ADDRS=""
+            else
+                HOST_ADDRS=$(hostname -I 2>/dev/null || true)
+            fi
+            ;;
+    esac
 
     HOST_ADDRS=$(printf '%s' "$HOST_ADDRS" | xargs)
 
